@@ -1,0 +1,9 @@
+name: mempalace-zh-flexembed
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -e .[dev,local-embeddings]
+      - huggingface_hub[cli]>=0.23
