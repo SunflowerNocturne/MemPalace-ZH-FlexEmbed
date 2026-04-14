@@ -247,6 +247,67 @@ class TestHandleRequest:
         mcp_server._maybe_preload_embeddings()
 
 
+class TestCollectionEmbeddingBinding:
+    def test_get_collection_binds_local_embedding_function_on_create(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        captured = {}
+
+        class _FakeClient:
+            def get_or_create_collection(self, name, **kwargs):
+                captured["name"] = name
+                captured["kwargs"] = kwargs
+                return object()
+
+        class _FakeRuntime:
+            pass
+
+        monkeypatch.setattr(mcp_server, "_get_client", lambda: _FakeClient())
+        monkeypatch.setattr(mcp_server, "get_embedding_runtime", lambda cfg: _FakeRuntime())
+        monkeypatch.setattr(
+            mcp_server,
+            "ChromaDocumentEmbeddingFunction",
+            lambda runtime: ("embed-fn", runtime),
+        )
+        mcp_server._collection_cache = None
+
+        mcp_server._get_collection(create=True)
+
+        assert captured["name"] == config.collection_name
+        assert captured["kwargs"]["metadata"] == {"hnsw:space": "cosine"}
+        assert captured["kwargs"]["embedding_function"][0] == "embed-fn"
+
+    def test_get_collection_binds_local_embedding_function_on_open(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        captured = {}
+
+        class _FakeClient:
+            def get_collection(self, name, **kwargs):
+                captured["name"] = name
+                captured["kwargs"] = kwargs
+                return object()
+
+        class _FakeRuntime:
+            pass
+
+        monkeypatch.setattr(mcp_server, "_get_client", lambda: _FakeClient())
+        monkeypatch.setattr(mcp_server, "get_embedding_runtime", lambda cfg: _FakeRuntime())
+        monkeypatch.setattr(
+            mcp_server,
+            "ChromaDocumentEmbeddingFunction",
+            lambda runtime: ("embed-fn", runtime),
+        )
+        mcp_server._collection_cache = None
+
+        mcp_server._get_collection(create=False)
+
+        assert captured["name"] == config.collection_name
+        assert captured["kwargs"]["embedding_function"][0] == "embed-fn"
+
+
 # ── Read Tools ──────────────────────────────────────────────────────────
 
 

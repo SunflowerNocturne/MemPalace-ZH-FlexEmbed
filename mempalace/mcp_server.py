@@ -30,7 +30,7 @@ from pathlib import Path
 from .config import MempalaceConfig, sanitize_name, sanitize_content
 from .version import __version__
 import chromadb
-from .backends.embeddings import get_embedding_runtime
+from .backends.embeddings import ChromaDocumentEmbeddingFunction, get_embedding_runtime
 from .query_sanitizer import sanitize_query
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
@@ -168,14 +168,17 @@ def _get_collection(create=False):
     global _collection_cache, _metadata_cache, _metadata_cache_time
     try:
         client = _get_client()
+        embedding_runtime = get_embedding_runtime(_config)
+        kwargs = {}
+        if embedding_runtime is not None:
+            kwargs["embedding_function"] = ChromaDocumentEmbeddingFunction(embedding_runtime)
         if create:
-            _collection_cache = client.get_or_create_collection(
-                _config.collection_name, metadata={"hnsw:space": "cosine"}
-            )
+            kwargs["metadata"] = {"hnsw:space": "cosine"}
+            _collection_cache = client.get_or_create_collection(_config.collection_name, **kwargs)
             _metadata_cache = None
             _metadata_cache_time = 0
         elif _collection_cache is None:
-            _collection_cache = client.get_collection(_config.collection_name)
+            _collection_cache = client.get_collection(_config.collection_name, **kwargs)
             _metadata_cache = None
             _metadata_cache_time = 0
         return _collection_cache
