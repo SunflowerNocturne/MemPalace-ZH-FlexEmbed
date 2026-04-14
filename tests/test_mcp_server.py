@@ -246,6 +246,26 @@ class TestHandleRequest:
         monkeypatch.setattr(mcp_server, "get_embedding_runtime", lambda cfg: None)
         mcp_server._maybe_preload_embeddings()
 
+class TestStreamableHttpServer:
+    def test_build_fastmcp_server_registers_existing_tools(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        mcp_server._args.host = "127.0.0.1"
+        mcp_server._args.port = 8765
+        mcp_server._args.mount_path = "/mcp"
+
+        server = mcp_server._build_fastmcp_server()
+
+        assert server.name == "mempalace"
+        assert server.settings.host == "127.0.0.1"
+        assert server.settings.port == 8765
+        assert server.settings.streamable_http_path == "/mcp"
+        tool_names = {tool.name for tool in server._tool_manager.list_tools()}
+        assert "mempalace_search" in tool_names
+        assert "mempalace_add_drawer" in tool_names
+        assert "mempalace_kg_query" in tool_names
+
 
 class TestCollectionEmbeddingBinding:
     def test_get_collection_binds_local_embedding_function_on_create(self, monkeypatch, config, kg):

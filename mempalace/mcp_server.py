@@ -24,6 +24,7 @@ import json
 import logging
 import hashlib
 import time
+import select
 from datetime import datetime
 from pathlib import Path
 
@@ -41,12 +42,51 @@ logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 logger = logging.getLogger("mempalace_mcp")
 
 
+def _get_idle_exit_seconds() -> float:
+    """Return MCP idle auto-exit timeout in seconds.
+
+    Set MEMPALACE_MCP_IDLE_EXIT_SECONDS to a positive number to let an idle
+    stdio MCP server exit on its own when the host forgets to reap it.
+    """
+    raw = os.environ.get("MEMPALACE_MCP_IDLE_EXIT_SECONDS", "").strip()
+    if not raw:
+        return 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid MEMPALACE_MCP_IDLE_EXIT_SECONDS=%r", raw)
+        return 0.0
+    return max(0.0, value)
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description="MemPalace MCP Server")
     parser.add_argument(
         "--palace",
         metavar="PATH",
         help="Path to the palace directory (overrides config file and env var)",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default="stdio",
+        help="MCP transport to serve (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface for streamable-http transport (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for streamable-http transport (default: 8000)",
+    )
+    parser.add_argument(
+        "--mount-path",
+        default="/mcp",
+        help="HTTP path for streamable-http transport (default: /mcp)",
     )
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -1352,6 +1392,36 @@ SUPPORTED_PROTOCOL_VERSIONS = [
 ]
 
 
+def _build_fastmcp_server():
+    """Build a FastMCP server that reuses the existing MemPalace tool handlers."""
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:  # pragma: no cover - exercised in runtime only
+        raise RuntimeError(
+            "Streamable HTTP transport requires the 'mcp' Python package. "
+            "Install it with: pip install 'mcp>=1.20,<2'"
+        ) from exc
+
+    server = FastMCP(
+        name="mempalace",
+        instructions=PALACE_PROTOCOL,
+        host=_args.host,
+        port=_args.port,
+        streamable_http_path=_args.mount_path,
+        json_response=True,
+    )
+
+    for tool_name, spec in TOOLS.items():
+        server.add_tool(
+            spec["handler"],
+            name=tool_name,
+            description=spec["description"],
+            structured_output=False,
+        )
+
+    return server
+
+
 def handle_request(request):
     method = request.get("method") or ""
     params = request.get("params") or {}
@@ -1464,9 +1534,30 @@ def handle_request(request):
 
 def main():
     logger.info("MemPalace MCP Server starting...")
+    if _args.transport == "streamable-http":
+        server = _build_fastmcp_server()
+        logger.info(
+            "Serving MemPalace MCP over streamable HTTP at http://%s:%s%s",
+            _args.host,
+            _args.port,
+            _args.mount_path,
+        )
+        server.run(transport="streamable-http")
+        return
+
     _maybe_preload_embeddings()
+    idle_exit_seconds = _get_idle_exit_seconds()
     while True:
         try:
+            if idle_exit_seconds > 0:
+                ready, _, _ = select.select([sys.stdin], [], [], idle_exit_seconds)
+                if not ready:
+                    logger.info(
+                        "No MCP requests for %.0fs; exiting idle server",
+                        idle_exit_seconds,
+                    )
+                    break
+
             line = sys.stdin.readline()
             if not line:
                 break

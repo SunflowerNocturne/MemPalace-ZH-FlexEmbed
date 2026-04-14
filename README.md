@@ -195,6 +195,13 @@ mempalace --palace ~/.mempalace-zh/palace search "what you're looking for" --win
 
 ## Generic MCP setup
 
+Recommended for desktop clients:
+
+- Use `Streamable HTTP` when your client supports it.
+- Keep `stdio` as a fallback for older hosts.
+- `Streamable HTTP` avoids the common problem where repeated reconnects can
+  leave multiple heavy Python MCP processes running at once.
+
 Core launch pattern:
 
 ```text
@@ -213,6 +220,47 @@ Example stdio MCP command:
 
 ```text
 /Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server --palace /Users/your_name/.mempalace-zh/palace
+```
+
+Recommended streamable HTTP launch:
+
+```bash
+/Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --mount-path /mcp \
+  --palace /Users/your_name/.mempalace-zh/palace-fiction
+```
+
+Then configure your MCP client with:
+
+```text
+URL=http://127.0.0.1:8765/mcp
+```
+
+Field-by-field examples:
+
+- Chatbox `远程 (http/sse)`:
+  - `名称`: `mempalace-zh-fiction`
+  - `URL`: `http://127.0.0.1:8765/mcp`
+  - `HTTP Header`: leave blank
+- Codex `Streamable HTTP`:
+  - `Name`: `mempalace-zh-fiction`
+  - `URL`: `http://127.0.0.1:8765/mcp`
+  - `Bearer token env var`: leave blank
+  - `Headers`: leave blank
+  - `Headers from environment variables`: leave blank
+
+If you want a second always-on palace, start it on another port:
+
+```bash
+/Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8766 \
+  --mount-path /mcp \
+  --palace /Users/your_name/.mempalace-zh/palace-personal
 ```
 
 If you change:

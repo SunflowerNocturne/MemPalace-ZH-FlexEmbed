@@ -209,6 +209,12 @@ mempalace --palace ~/.mempalace-zh/palace search "what you're looking for" --win
 
 ## 通用 MCP 配置方式
 
+桌面端客户端的推荐方式：
+
+- 客户端支持的话，优先使用 `Streamable HTTP`
+- `stdio` 作为兼容方案保留
+- `Streamable HTTP` 可以避免重复重连后残留多份重型 Python MCP 进程的问题
+
 核心命令模式：
 
 ```text
@@ -227,6 +233,47 @@ MEMPALACE_EMBED_BATCH_SIZE=2
 
 ```text
 /Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server --palace /Users/your_name/.mempalace-zh/palace
+```
+
+推荐的 Streamable HTTP 启动方式：
+
+```bash
+/Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --mount-path /mcp \
+  --palace /Users/your_name/.mempalace-zh/palace-fiction
+```
+
+然后在 MCP 客户端里填写：
+
+```text
+URL=http://127.0.0.1:8765/mcp
+```
+
+逐项填写示例：
+
+- Chatbox `远程 (http/sse)`：
+  - `名称`：`mempalace-zh-fiction`
+  - `URL`：`http://127.0.0.1:8765/mcp`
+  - `HTTP Header`：留空
+- Codex `Streamable HTTP`：
+  - `Name`：`mempalace-zh-fiction`
+  - `URL`：`http://127.0.0.1:8765/mcp`
+  - `Bearer token env var`：留空
+  - `Headers`：留空
+  - `Headers from environment variables`：留空
+
+如果你还想常驻第二套 palace，可以换另一个端口启动：
+
+```bash
+/Users/your_name/miniconda3/envs/mempalace-zh-flexembed/bin/python -m mempalace.mcp_server \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8766 \
+  --mount-path /mcp \
+  --palace /Users/your_name/.mempalace-zh/palace-personal
 ```
 
 如果你修改了：
