@@ -12,6 +12,8 @@ A MemPalace fork focused on three practical upgrades for local AI memory:
 
 It also includes stdio MCP integration for local AI clients such as Chatbox,
 Claude Code, Codex-style agents, and similar tools.
+It can also run as a long-lived local MCP service over streamable HTTP, which
+is often the more stable choice for desktop clients.
 
 ## Why this fork exists
 
@@ -23,6 +25,7 @@ parts that matter in real local memory workflows:
 - handling exported chat transcripts more reliably
 - improving retrieval on Chinese and mixed-language conversation data
 - making MCP usage smoother in local stdio clients
+- supporting service-style MCP deployment over streamable HTTP, not just stdio
 
 ## Key features
 
@@ -85,6 +88,17 @@ Typical categories include:
 
 This fork also fixes UTF-8 MCP output, so Chinese appears directly instead of
 being escaped as `\uXXXX`.
+
+### 5. stdio and service-style MCP transports
+
+This fork supports both:
+
+- `stdio` MCP, where the client launches the server process for you
+- `streamable HTTP`, where you run one long-lived local MCP service and let
+  multiple clients connect to it
+
+That second mode is especially useful when a desktop client tends to leave
+duplicate `stdio` Python processes behind after repeated reconnects.
 
 ## Recommended installation
 

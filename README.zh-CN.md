@@ -12,6 +12,7 @@
 
 同时，它也保留并强化了面向本地 AI 客户端的 `stdio MCP` 工作流，
 适用于 Chatbox、Claude Code、Codex 风格 agent 以及其他支持本地 MCP 的工具。
+此外，它也支持把 MCP 作为一个长期运行的本地 HTTP 服务启动，不局限于 `stdio`。
 
 ## 这个项目的定位
 
@@ -22,6 +23,7 @@
 - 更可靠地处理导出的聊天 transcript
 - 提升中文与中英混杂长对话的检索效果
 - 让本地 MCP 接入更稳、更容易复现
+- 支持通过 streamable HTTP 作为常驻服务启动 MCP，而不只靠 stdio
 
 ## 最大亮点：可自选 embedding 模型
 
@@ -95,6 +97,16 @@ export MEMPALACE_EMBED_BATCH_SIZE=2
 - 其他支持 stdio MCP 的桌面端或终端端工具
 
 另外，这个分支还修复了 MCP 中文输出显示为 `\uXXXX` 的问题，现在会直接输出 UTF-8 中文。
+
+## 第五亮点：同时支持 stdio 与服务化 MCP
+
+这个分支同时支持两种接法：
+
+- `stdio`：由客户端帮你拉起 MCP server
+- `streamable HTTP`：你自己启动一个长期运行的本地 MCP 服务，然后让多个客户端连它
+
+第二种方式特别适合桌面端，因为有些客户端在频繁重连后会残留多份 `stdio`
+Python 进程，而服务化 HTTP 模式能更稳定地避免这个问题。
 
 ## 推荐安装方式
 
