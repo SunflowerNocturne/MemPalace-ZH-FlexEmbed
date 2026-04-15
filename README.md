@@ -9,11 +9,10 @@ A MemPalace fork focused on three practical upgrades for local AI memory:
 - flexible self-hosted embedding models
 - transcript-aware long-chat mining
 - stronger Chinese and mixed-language support
-
-It also includes stdio MCP integration for local AI clients such as Chatbox,
-Claude Code, Codex-style agents, and similar tools.
-It can also run as a long-lived local MCP service over streamable HTTP, which
-is often the more stable choice for desktop clients.
+- stdio MCP integration for local AI clients such as Chatbox, Claude Code,
+  Codex-style agents, and similar tools
+- service-style MCP deployment over streamable HTTP for clients that prefer one
+  long-lived local service
 
 ## Why this fork exists
 
@@ -26,6 +25,8 @@ parts that matter in real local memory workflows:
 - improving retrieval on Chinese and mixed-language conversation data
 - making MCP usage smoother in local stdio clients
 - supporting service-style MCP deployment over streamable HTTP, not just stdio
+- recovering short memory queries more reliably over MCP without requiring the
+  caller to know a lot of hidden context
 
 ## Key features
 
@@ -100,6 +101,20 @@ This fork supports both:
 That second mode is especially useful when a desktop client tends to leave
 duplicate `stdio` Python processes behind after repeated reconnects.
 
+### 6. Better short-query recovery over MCP
+
+Real MCP clients often search with very short labels because the model does not
+yet know the surrounding context.
+
+This fork now improves that path by:
+
+- using a looser default distance for short queries
+- retrying enriched query variants automatically
+- falling back to lexical matching when semantic recall is too weak
+
+That makes terse lookups like `name origin`, `steak incident`, or `allergy`
+less likely to come back empty when the underlying memory is actually present.
+
 ## Recommended installation
 
 For this project, the recommended pattern is editable install:
@@ -130,7 +145,7 @@ The local embedding extra currently pulls in:
 ### 1. Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/MemPalace-ZH-FlexEmbed.git
+git clone https://github.com/SunflowerNocturne/MemPalace-ZH-FlexEmbed.git
 cd MemPalace-ZH-FlexEmbed
 ```
 
@@ -268,7 +283,7 @@ Field-by-field examples:
 
 Short-query recovery over MCP:
 
-- Recent builds automatically recover from short memory queries such as `Lux 起名`, `巴西牛排`, or other terse event labels.
+- Recent builds automatically recover from short memory queries such as `name origin`, `steak incident`, or other terse event labels.
 - If the caller omits a strict threshold, the server now uses a looser default for short queries, retries enriched variants, and can fall back to lexical matching when semantic recall is too weak.
 - In practice, MCP clients should usually omit `max_distance` for short/event-style lookups instead of forcing a strict value like `0.5`.
 

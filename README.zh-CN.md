@@ -9,10 +9,8 @@
 - **可自由切换的本地 embedding 模型**
 - **面向长聊天记录的 transcript-aware 挖掘**
 - **更强的中文 / 中英混杂支持**
-
-同时，它也保留并强化了面向本地 AI 客户端的 `stdio MCP` 工作流，
-适用于 Chatbox、Claude Code、Codex 风格 agent 以及其他支持本地 MCP 的工具。
-此外，它也支持把 MCP 作为一个长期运行的本地 HTTP 服务启动，不局限于 `stdio`。
+- **面向本地 AI 客户端的通用 `stdio MCP` 接入**
+- **支持作为长期运行本地服务的 `streamable HTTP` MCP 部署**
 
 ## 这个项目的定位
 
@@ -24,6 +22,7 @@
 - 提升中文与中英混杂长对话的检索效果
 - 让本地 MCP 接入更稳、更容易复现
 - 支持通过 streamable HTTP 作为常驻服务启动 MCP，而不只靠 stdio
+- 让 MCP 下的短 query 检索更不容易因为上下文太少而直接返回空结果
 
 ## 最大亮点：可自选 embedding 模型
 
@@ -108,6 +107,18 @@ export MEMPALACE_EMBED_BATCH_SIZE=2
 第二种方式特别适合桌面端，因为有些客户端在频繁重连后会残留多份 `stdio`
 Python 进程，而服务化 HTTP 模式能更稳定地避免这个问题。
 
+## 第六亮点：MCP 下更强的短 query 恢复
+
+真实 MCP 使用里，AI 往往只会先搜一个很短的标签词，因为它当下并不知道完整上下文。
+
+这个分支现在会通过这些方式补救：
+
+- 对短 query 使用更宽松的默认距离
+- 自动尝试扩写变体
+- 当语义召回过弱时回退到 lexical matching
+
+这会让像 `名字来源`、`牛排事件`、`过敏` 这种很短的查询，不那么容易出现“明明存过，却返回空列表”的情况。
+
 ## 推荐安装方式
 
 推荐使用：
@@ -142,7 +153,7 @@ pip install -e ".[dev,local-embeddings]"
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/MemPalace-ZH-FlexEmbed.git
+git clone https://github.com/SunflowerNocturne/MemPalace-ZH-FlexEmbed.git
 cd MemPalace-ZH-FlexEmbed
 ```
 
@@ -279,7 +290,7 @@ URL=http://127.0.0.1:8765/mcp
 
 MCP 下的短 query 自动恢复：
 
-- 新版本会自动补救像 `Lux 起名`、`巴西牛排` 这种很短的记忆检索词，不再那么容易出现“库里明明有，但返回空列表”。
+- 新版本会自动补救像 `名字来源`、`牛排事件` 这种很短的记忆检索词，不再那么容易出现“库里明明有，但返回空列表”。
 - 如果调用方没有强行设置很严格的阈值，服务端会对短 query 使用更宽松的默认距离、自动尝试扩写变体，并在语义召回过弱时回退到 lexical matching。
 - 实际使用时，MCP 客户端对这类短标签 / 事件名查询，通常应该省略 `max_distance`，而不是强行传入 `0.5` 这种严格值。
 
