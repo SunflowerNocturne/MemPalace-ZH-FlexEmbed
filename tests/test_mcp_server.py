@@ -506,9 +506,52 @@ class TestSearchTool:
         monkeypatch.setattr(mcp_server, "_lexical_fallback_search", lambda *args, **kwargs: [])
 
         result = mcp_server.tool_search(query="Lux 起名")
-        assert "Lux 起名 名字 名号 命名" in result["query_variants_tried"]
+        assert "Lux 起名 名字 命名 名号 称呼 来源 name" in result["query_variants_tried"]
         assert result["results"][0]["source_file"] == "g.md"
         assert calls[0] == "Lux 起名"
+
+    def test_search_hardware_query_retries_with_structured_variant(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+
+        def fake_search(query, palace_path, wing=None, room=None, n_results=5, max_distance=0.0):
+            calls.append(query)
+            if "参数" in query and "芯片" in query:
+                return {
+                    "query": query,
+                    "filters": {"wing": wing, "room": room},
+                    "total_before_filter": 1,
+                    "results": [
+                        {
+                            "text": "这是一段关于苹果电脑配置与芯片参数的记录。",
+                            "wing": "w",
+                            "room": "r",
+                            "source_file": "hardware.md",
+                            "similarity": 0.1,
+                            "distance": 0.9,
+                            "rank_score": 0.8,
+                            "matched_terms": ["macbook", "参数", "芯片"],
+                        }
+                    ],
+                }
+            return {
+                "query": query,
+                "filters": {"wing": wing, "room": room},
+                "total_before_filter": 0,
+                "results": [],
+            }
+
+        monkeypatch.setattr(mcp_server, "search_memories", fake_search)
+        monkeypatch.setattr(mcp_server, "_lexical_fallback_search", lambda *args, **kwargs: [])
+
+        result = mcp_server.tool_search(query="MacBook Mac Studio 苹果电脑")
+        assert "MacBook Mac Studio 苹果电脑 配置 参数 型号 规格 芯片 内存" in result[
+            "query_variants_tried"
+        ]
+        assert result["results"][0]["source_file"] == "hardware.md"
+        assert calls[0] == "MacBook Mac Studio 苹果电脑"
 
     def test_search_short_query_uses_lexical_fallback(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
@@ -591,7 +634,10 @@ class TestSearchTool:
         result = mcp_server.tool_search(query="电脑 配置 CPU 内存 显卡")
         assert calls[0] == ("电脑 配置 CPU 内存 显卡", 1.0)
         assert calls[1] == ("电脑 配置 CPU 内存 显卡", 0.0)
-        assert result["query_variants_tried"] == ["电脑 配置 CPU 内存 显卡"]
+        assert result["query_variants_tried"] == [
+            "电脑 配置 CPU 内存 显卡",
+            "电脑 配置 CPU 内存 显卡 配置 参数 型号 规格 芯片 内存",
+        ]
         assert result["results"][0]["source_file"] == "hardware.md"
 
     def test_list_rooms_rejects_invalid_wing(self, monkeypatch, config, kg):

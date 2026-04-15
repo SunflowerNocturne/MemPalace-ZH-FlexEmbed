@@ -259,12 +259,31 @@ _METADATA_CACHE_TTL = 5.0  # seconds
 _MAX_RESULTS = 100  # upper bound for search/list limit params
 _SHORT_QUERY_MAX_TOKENS = 3
 _SHORT_QUERY_MAX_CHARS = 12
-_SEARCH_QUERY_ENRICHMENTS = {
-    "起名": ["名字", "名号", "命名"],
-    "命名": ["名字", "名号"],
-    "名字": ["名号", "命名"],
-    "过敏": ["花粉", "鼻炎", "螨虫"],
+_NAMING_QUERY_TERMS = {
+    "起名",
+    "命名",
+    "名字",
+    "名号",
+    "称呼",
+    "name",
 }
+_NAMING_QUERY_EXPANSIONS = ["名字", "命名", "名号", "称呼", "来源", "name"]
+_HARDWARE_HINT_TERMS = {
+    "电脑",
+    "配置",
+    "cpu",
+    "gpu",
+    "显卡",
+    "内存",
+    "macbook",
+    "mac",
+    "studio",
+    "苹果电脑",
+    "芯片",
+    "ssd",
+    "ram",
+}
+_HARDWARE_QUERY_EXPANSIONS = ["配置", "参数", "型号", "规格", "芯片", "内存"]
 
 
 def _get_cached_metadata(col, where=None):
@@ -306,6 +325,21 @@ def _query_has_ascii_tokens(query: str) -> bool:
     return any(any("a" <= ch.lower() <= "z" for ch in token) for token in _extract_query_tokens(query))
 
 
+def _has_token_family(query: str, families: set[str]) -> bool:
+    lowered = query.lower()
+    tokens = _extract_query_tokens(query)
+    return any(token in families for token in tokens) or any(term in lowered for term in families)
+
+
+def _looks_like_hardware_query(query: str) -> bool:
+    tokens = _extract_query_tokens(query)
+    matched = sum(1 for token in tokens if token in _HARDWARE_HINT_TERMS)
+    if matched >= 2:
+        return True
+    lowered = query.lower()
+    return any(term in lowered for term in ("macbook", "mac studio", "苹果电脑"))
+
+
 def _build_search_variants(query: str) -> list[str]:
     variants = []
 
@@ -315,10 +349,11 @@ def _build_search_variants(query: str) -> list[str]:
             variants.append(cleaned)
 
     _append(query)
-    lower_query = query.lower()
-    for needle, extras in _SEARCH_QUERY_ENRICHMENTS.items():
-        if needle in query or needle in lower_query:
-            _append(f"{query} {' '.join(extras)}")
+    if _has_token_family(query, _NAMING_QUERY_TERMS):
+        _append(f"{query} {' '.join(_NAMING_QUERY_EXPANSIONS)}")
+
+    if _looks_like_hardware_query(query):
+        _append(f"{query} {' '.join(_HARDWARE_QUERY_EXPANSIONS)}")
 
     tokens = _extract_query_tokens(query)
     has_ascii_token = _query_has_ascii_tokens(query)
