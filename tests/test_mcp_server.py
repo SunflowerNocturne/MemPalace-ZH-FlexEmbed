@@ -550,6 +550,50 @@ class TestSearchTool:
         assert result["results"][0]["source_file"] == "Gurdjieff.md"
         assert result["results"][0]["match_mode"] == "lexical_fallback"
 
+    def test_search_retries_original_query_without_threshold_when_low_signal(
+        self, monkeypatch, config, kg
+    ):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+
+        def fake_search(query, palace_path, wing=None, room=None, n_results=5, max_distance=0.0):
+            calls.append((query, max_distance))
+            if query == "电脑 配置 CPU 内存 显卡" and max_distance == 0.0:
+                return {
+                    "query": query,
+                    "filters": {"wing": wing, "room": room},
+                    "total_before_filter": 25,
+                    "results": [
+                        {
+                            "text": "这是一段关于电脑配置、CPU、内存与显卡的记录。",
+                            "wing": "hardware",
+                            "room": "notes",
+                            "source_file": "hardware.md",
+                            "similarity": 0.0,
+                            "distance": 0.0,
+                            "rank_score": 0.7,
+                            "matched_terms": ["电脑", "配置", "cpu", "内存", "显卡"],
+                        }
+                    ],
+                }
+            return {
+                "query": query,
+                "filters": {"wing": wing, "room": room},
+                "total_before_filter": 25,
+                "results": [],
+            }
+
+        monkeypatch.setattr(mcp_server, "search_memories", fake_search)
+        monkeypatch.setattr(mcp_server, "_lexical_fallback_search", lambda *args, **kwargs: [])
+
+        result = mcp_server.tool_search(query="电脑 配置 CPU 内存 显卡")
+        assert calls[0] == ("电脑 配置 CPU 内存 显卡", 1.0)
+        assert calls[1] == ("电脑 配置 CPU 内存 显卡", 0.0)
+        assert result["query_variants_tried"] == ["电脑 配置 CPU 内存 显卡"]
+        assert result["results"][0]["source_file"] == "hardware.md"
+
     def test_list_rooms_rejects_invalid_wing(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server

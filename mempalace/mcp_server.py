@@ -637,7 +637,11 @@ def tool_search(
     retry_variants = []
     if _search_result_has_low_signal(primary, clean_query):
         retry_distance = 0.0 if effective_distance > 0.0 else effective_distance
-        for variant in query_variants[1:]:
+        retry_queries = []
+        if retry_distance != effective_distance:
+            retry_queries.append(clean_query)
+        retry_queries.extend(query_variants[1:])
+        for variant in retry_queries:
             variant_result = search_memories(
                 variant,
                 palace_path=_config.palace_path,
@@ -652,7 +656,7 @@ def tool_search(
         merged_semantic_results = _merge_search_results(primary, *retry_variants, limit=limit)
         result["results"] = merged_semantic_results
         if retry_variants:
-            result["query_variants_tried"] = query_variants
+            result["query_variants_tried"] = retry_queries
             result["retry_max_distance"] = retry_distance
 
         lexical_hits = []
