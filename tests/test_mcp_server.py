@@ -438,6 +438,118 @@ class TestSearchTool:
         result_loose = tool_search(query="JWT", max_distance=0.01, min_similarity=999.0)
         assert len(result_strict["results"]) <= len(result_loose["results"])
 
+    def test_search_short_query_uses_looser_default_distance(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+
+        def fake_search(query, palace_path, wing=None, room=None, n_results=5, max_distance=0.0):
+            calls.append((query, max_distance))
+            return {
+                "query": query,
+                "filters": {"wing": wing, "room": room},
+                "total_before_filter": 1,
+                "results": [
+                    {
+                        "text": "Lux 起名的片段",
+                        "wing": "w",
+                        "room": "r",
+                        "source_file": "x.md",
+                        "similarity": 0.2,
+                        "distance": 0.8,
+                        "rank_score": 0.8,
+                        "matched_terms": ["lux", "起名"],
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(mcp_server, "search_memories", fake_search)
+        result = mcp_server.tool_search(query="Lux 起名")
+        assert calls[0] == ("Lux 起名", 1.2)
+        assert result["effective_max_distance"] == 1.2
+
+    def test_search_short_query_retries_with_expanded_variants(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+
+        def fake_search(query, palace_path, wing=None, room=None, n_results=5, max_distance=0.0):
+            calls.append(query)
+            if "名字" in query:
+                return {
+                    "query": query,
+                    "filters": {"wing": wing, "room": room},
+                    "total_before_filter": 1,
+                    "results": [
+                        {
+                            "text": "Lux 的名字与名号",
+                            "wing": "w",
+                            "room": "r",
+                            "source_file": "g.md",
+                            "similarity": 0.1,
+                            "distance": 0.9,
+                            "rank_score": 0.9,
+                            "matched_terms": ["lux", "名字"],
+                        }
+                    ],
+                }
+            return {
+                "query": query,
+                "filters": {"wing": wing, "room": room},
+                "total_before_filter": 0,
+                "results": [],
+            }
+
+        monkeypatch.setattr(mcp_server, "search_memories", fake_search)
+        monkeypatch.setattr(mcp_server, "_lexical_fallback_search", lambda *args, **kwargs: [])
+
+        result = mcp_server.tool_search(query="Lux 起名")
+        assert "Lux 起名 名字 名号 命名" in result["query_variants_tried"]
+        assert result["results"][0]["source_file"] == "g.md"
+        assert calls[0] == "Lux 起名"
+
+    def test_search_short_query_uses_lexical_fallback(self, monkeypatch, config, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        monkeypatch.setattr(
+            mcp_server,
+            "search_memories",
+            lambda *args, **kwargs: {
+                "query": args[0],
+                "filters": {"wing": kwargs.get("wing"), "room": kwargs.get("room")},
+                "total_before_filter": 0,
+                "results": [],
+            },
+        )
+
+        class _FakeCollection:
+            def count(self):
+                return 2
+
+            def get(self, include=None, limit=500, offset=0, where=None):
+                if offset > 0:
+                    return {"documents": [], "metadatas": []}
+                return {
+                    "documents": [
+                        "这是关于巴西牛排事件的详细分析。",
+                        "完全无关的别的内容。",
+                    ],
+                    "metadatas": [
+                        {"wing": "phase1", "room": "planning", "source_file": "/tmp/Gurdjieff.md"},
+                        {"wing": "other", "room": "general", "source_file": "/tmp/Other.md"},
+                    ],
+                }
+
+        monkeypatch.setattr(mcp_server, "_get_collection", lambda create=False: _FakeCollection())
+
+        result = mcp_server.tool_search(query="巴西牛排")
+        assert result["lexical_fallback_used"] is True
+        assert result["results"][0]["source_file"] == "Gurdjieff.md"
+        assert result["results"][0]["match_mode"] == "lexical_fallback"
+
     def test_list_rooms_rejects_invalid_wing(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server

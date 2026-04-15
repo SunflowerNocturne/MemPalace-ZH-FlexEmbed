@@ -266,6 +266,12 @@ Field-by-field examples:
   - `Headers`: leave blank
   - `Headers from environment variables`: leave blank
 
+Short-query recovery over MCP:
+
+- Recent builds automatically recover from short memory queries such as `Lux 起名`, `巴西牛排`, or other terse event labels.
+- If the caller omits a strict threshold, the server now uses a looser default for short queries, retries enriched variants, and can fall back to lexical matching when semantic recall is too weak.
+- In practice, MCP clients should usually omit `max_distance` for short/event-style lookups instead of forcing a strict value like `0.5`.
+
 If you want a second always-on palace, start it on another port:
 
 ```bash

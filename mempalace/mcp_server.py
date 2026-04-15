@@ -33,7 +33,7 @@ from .version import __version__
 import chromadb
 from .backends.embeddings import ChromaDocumentEmbeddingFunction, get_embedding_runtime
 from .query_sanitizer import sanitize_query
-from .searcher import search_memories
+from .searcher import _extract_query_tokens, search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
 
 from .knowledge_graph import KnowledgeGraph
@@ -257,6 +257,14 @@ _metadata_cache = None
 _metadata_cache_time = 0
 _METADATA_CACHE_TTL = 5.0  # seconds
 _MAX_RESULTS = 100  # upper bound for search/list limit params
+_SHORT_QUERY_MAX_TOKENS = 3
+_SHORT_QUERY_MAX_CHARS = 12
+_SEARCH_QUERY_ENRICHMENTS = {
+    "起名": ["名字", "名号", "命名"],
+    "命名": ["名字", "名号"],
+    "名字": ["名号", "命名"],
+    "过敏": ["花粉", "鼻炎", "螨虫"],
+}
 
 
 def _get_cached_metadata(col, where=None):
@@ -281,6 +289,185 @@ def _sanitize_optional_name(value: str = None, field_name: str = "name") -> str:
     if value is None:
         return None
     return sanitize_name(value, field_name)
+
+
+def _is_short_search_query(query: str) -> bool:
+    tokens = _extract_query_tokens(query)
+    if len(tokens) <= _SHORT_QUERY_MAX_TOKENS:
+        return True
+    return len(query.strip()) <= _SHORT_QUERY_MAX_CHARS
+
+
+def _default_search_distance(query: str) -> float:
+    return 1.2 if _is_short_search_query(query) else 1.0
+
+
+def _query_has_ascii_tokens(query: str) -> bool:
+    return any(any("a" <= ch.lower() <= "z" for ch in token) for token in _extract_query_tokens(query))
+
+
+def _build_search_variants(query: str) -> list[str]:
+    variants = []
+
+    def _append(candidate: str):
+        cleaned = " ".join(candidate.split()).strip()
+        if cleaned and cleaned not in variants:
+            variants.append(cleaned)
+
+    _append(query)
+    lower_query = query.lower()
+    for needle, extras in _SEARCH_QUERY_ENRICHMENTS.items():
+        if needle in query or needle in lower_query:
+            _append(f"{query} {' '.join(extras)}")
+
+    tokens = _extract_query_tokens(query)
+    has_ascii_token = _query_has_ascii_tokens(query)
+    if (
+        _is_short_search_query(query)
+        and "事件" not in query
+        and len(tokens) <= 2
+        and not has_ascii_token
+    ):
+        _append(f"{query} 事件")
+
+    return variants
+
+
+def _search_result_has_low_signal(result: dict, original_query: str) -> bool:
+    hits = result.get("results", [])
+    if not hits:
+        return True
+    if not _is_short_search_query(original_query):
+        return False
+
+    query_tokens = _extract_query_tokens(original_query)
+    if not query_tokens:
+        return False
+
+    matched = set()
+    for hit in hits[: min(3, len(hits))]:
+        matched.update(token for token in hit.get("matched_terms", []) if token in query_tokens)
+
+    required = min(len(query_tokens), 2)
+    return len(matched) < required
+
+
+def _merge_search_results(*result_sets: dict, limit: int) -> list[dict]:
+    merged = {}
+    for result in result_sets:
+        for hit in result.get("results", []):
+            key = (
+                hit.get("wing"),
+                hit.get("room"),
+                hit.get("source_file"),
+                hit.get("text"),
+            )
+            current = merged.get(key)
+            if current is None:
+                merged[key] = dict(hit)
+                continue
+            current_terms = set(current.get("matched_terms", []))
+            new_terms = set(hit.get("matched_terms", []))
+            if hit.get("rank_score", 0.0) > current.get("rank_score", 0.0):
+                merged[key] = dict(hit)
+                merged[key]["matched_terms"] = sorted(current_terms | new_terms)
+            else:
+                current["matched_terms"] = sorted(current_terms | new_terms)
+                current["rank_score"] = max(current.get("rank_score", 0.0), hit.get("rank_score", 0.0))
+                current["similarity"] = max(current.get("similarity", 0.0), hit.get("similarity", 0.0))
+    ordered = sorted(
+        merged.values(),
+        key=lambda hit: (hit.get("rank_score", 0.0), hit.get("similarity", 0.0)),
+        reverse=True,
+    )
+    return ordered[:limit]
+
+
+def _lexical_fallback_search(
+    query_variants: list[str], limit: int, wing: str = None, room: str = None
+) -> list[dict]:
+    col = _get_collection()
+    if not col:
+        return []
+
+    where = {}
+    if wing and room:
+        where = {"$and": [{"wing": wing}, {"room": room}]}
+    elif wing:
+        where = {"wing": wing}
+    elif room:
+        where = {"room": room}
+
+    total = col.count()
+    offset = 0
+    candidates = {}
+
+    while offset < total:
+        kwargs = {"include": ["documents", "metadatas"], "limit": 500, "offset": offset}
+        if where:
+            kwargs["where"] = where
+        batch = col.get(**kwargs)
+        docs = batch.get("documents", [])
+        metas = batch.get("metadatas", [])
+        if not docs:
+            break
+        offset += len(docs)
+
+        for doc, meta in zip(docs, metas):
+            source_name = Path(meta.get("source_file", "?")).name.lower()
+            haystack = " ".join(
+                [
+                    doc.lower(),
+                    meta.get("wing", "").lower(),
+                    meta.get("room", "").lower(),
+                    source_name,
+                ]
+            )
+
+            best = None
+            for variant in query_variants:
+                tokens = _extract_query_tokens(variant)
+                if not tokens:
+                    continue
+                lowered = variant.lower()
+                matched = [token for token in tokens if token in haystack]
+                exact = lowered in haystack
+                if not exact and not matched:
+                    continue
+                lexical_ratio = len(matched) / len(tokens)
+                score = lexical_ratio
+                if exact:
+                    score += 1.0
+                if lowered in source_name:
+                    score += 0.5
+                if best is None or score > best["rank_score"]:
+                    best = {
+                        "text": doc,
+                        "wing": meta.get("wing", "unknown"),
+                        "room": meta.get("room", "unknown"),
+                        "source_file": Path(meta.get("source_file", "?")).name,
+                        "similarity": 0.0,
+                        "distance": 0.0,
+                        "rank_score": round(score, 4),
+                        "matched_terms": matched,
+                        "match_mode": "lexical_fallback",
+                    }
+
+            if best is None:
+                continue
+
+            key = (
+                best["wing"],
+                best["room"],
+                best["source_file"],
+                best["text"],
+            )
+            existing = candidates.get(key)
+            if existing is None or best["rank_score"] > existing["rank_score"]:
+                candidates[key] = best
+
+    ordered = sorted(candidates.values(), key=lambda hit: hit["rank_score"], reverse=True)
+    return ordered[:limit]
 
 
 # ==================== READ TOOLS ====================
@@ -415,7 +602,7 @@ def tool_search(
     limit: int = 5,
     wing: str = None,
     room: str = None,
-    max_distance: float = 1.5,
+    max_distance: float = None,
     min_similarity: float = None,
     context: str = None,
 ):
@@ -425,20 +612,61 @@ def tool_search(
         room = _sanitize_optional_name(room, "room")
     except ValueError as e:
         return {"error": str(e)}
-    # Backwards compat: accept old name
-    # Backwards compat: convert old similarity scale (higher=stricter) to
-    # distance scale (lower=stricter). Similarity 0.8 → distance 0.2.
-    dist = (1.0 - min_similarity) if min_similarity is not None else max_distance
     # Mitigate system prompt contamination (Issue #333)
     sanitized = sanitize_query(query)
-    result = search_memories(
-        sanitized["clean_query"],
+    clean_query = sanitized["clean_query"]
+    query_variants = _build_search_variants(clean_query)
+
+    # Backwards compat: convert old similarity scale (higher=stricter) to
+    # distance scale (lower=stricter). Similarity 0.8 → distance 0.2.
+    explicit_distance = (1.0 - min_similarity) if min_similarity is not None else max_distance
+    effective_distance = (
+        explicit_distance if explicit_distance is not None else _default_search_distance(clean_query)
+    )
+
+    primary = search_memories(
+        clean_query,
         palace_path=_config.palace_path,
         wing=wing,
         room=room,
         n_results=limit,
-        max_distance=dist,
+        max_distance=effective_distance,
     )
+    result = primary
+
+    retry_variants = []
+    if _search_result_has_low_signal(primary, clean_query):
+        retry_distance = 0.0 if effective_distance > 0.0 else effective_distance
+        for variant in query_variants[1:]:
+            variant_result = search_memories(
+                variant,
+                palace_path=_config.palace_path,
+                wing=wing,
+                room=room,
+                n_results=limit,
+                max_distance=retry_distance,
+            )
+            retry_variants.append(variant_result)
+
+        result = dict(primary)
+        merged_semantic_results = _merge_search_results(primary, *retry_variants, limit=limit)
+        result["results"] = merged_semantic_results
+        if retry_variants:
+            result["query_variants_tried"] = query_variants
+            result["retry_max_distance"] = retry_distance
+
+        lexical_hits = []
+        if (
+            _is_short_search_query(clean_query)
+            and not _query_has_ascii_tokens(clean_query)
+            and _search_result_has_low_signal(result, clean_query)
+        ):
+            lexical_hits = _lexical_fallback_search(query_variants, limit=limit, wing=wing, room=room)
+            if lexical_hits:
+                result["results"] = _merge_search_results(result, {"results": lexical_hits}, limit=limit)
+                result["lexical_fallback_used"] = True
+
+    result["effective_max_distance"] = effective_distance
     # Attach sanitizer metadata for transparency
     if sanitized["was_sanitized"]:
         result["query_sanitized"] = True
@@ -1182,13 +1410,13 @@ TOOLS = {
         "handler": tool_graph_stats,
     },
     "mempalace_search": {
-        "description": "Semantic search. Returns verbatim drawer content with similarity scores. IMPORTANT: 'query' must contain ONLY search keywords. Use 'context' for background. Results with cosine distance > max_distance are filtered out.",
+        "description": "Semantic search with short-query recovery. Returns verbatim drawer content with similarity scores. IMPORTANT: 'query' should contain search keywords only. For short labels or event names, prefer omitting max_distance so the server can auto-broaden and retry. If a strict threshold produces no hits, the server may retry with looser distance and lexical fallback.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Short search query ONLY — keywords or a question. Max 250 chars.",
+                    "description": "Search keywords or a short question. Keep it concise; the server can expand short queries automatically. Max 250 chars.",
                     "maxLength": 250,
                 },
                 "limit": {
@@ -1201,11 +1429,11 @@ TOOLS = {
                 "room": {"type": "string", "description": "Filter by room (optional)"},
                 "max_distance": {
                     "type": "number",
-                    "description": "Max cosine distance threshold (0=identical, 2=opposite). Results further than this are dropped. Lower = stricter. Default 1.5. Set to 0 to disable.",
+                    "description": "Optional max cosine distance threshold (0=identical, 2=opposite). Lower = stricter. Prefer omitting this for short/event-style queries. Set to 0 to disable distance filtering entirely.",
                 },
                 "context": {
                     "type": "string",
-                    "description": "Background context for the search (optional). NOT used for embedding — only for future re-ranking.",
+                    "description": "Optional background hints. Not embedded directly, but useful for future reranking or debugging.",
                 },
             },
             "required": ["query"],
